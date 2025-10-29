@@ -1,7 +1,9 @@
+cat > requirements.txt <<'REQ'
 streamlit
 pandas
-numpy
 scikit-learn
 joblib
-# Cloud build of TensorFlow (CPU)
-tensorflow==2.17.*
+tensorflow==2.17.1
+numpy<2.0
+protobuf<5
+REQ
