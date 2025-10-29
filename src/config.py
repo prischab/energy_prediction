@@ -1,0 +1,9 @@
+DATA_PATH = "data/household_power_consumption.txt"
+RESAMPLE_RULE = "h" # hourly (future-proof)
+TARGET = "Global_active_power"
+MAX_LAG = 24
+ROLL_WINDOWS = [3, 6, 12, 24]
+N_FEATURES_RFE = 30
+SEQ_LEN = 24
+HORIZONS = {"1h": 1, "6h": 6, "24h": 24}
+MODEL_DIR = "models"
