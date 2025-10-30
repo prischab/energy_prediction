@@ -3,5 +3,4 @@ pandas
 scikit-learn
 joblib
 tensorflow==2.20.0
-numpy<2.0
-protobuf<5
+numpy==1.26.4
