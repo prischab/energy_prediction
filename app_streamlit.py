@@ -1,23 +1,14 @@
 import streamlit as st
-import pandas as pd
 import joblib
+import numpy as np
 import os
 
-st.set_page_config(page_title="Household Energy Forecast", layout="centered")
-st.title("Household Energy Forecast — RFE style (demo)")
-st.caption("Upload the last 24 engineered rows to get a prediction. This cloud version uses a lightweight model.")
+st.set_page_config(page_title="Household Energy Forecast — RFE + LSTM", layout="centered")
+
+st.title("⚡ Household Energy Forecast — RFE + LSTM")
+st.write("Enter your latest household energy readings below to get a next-hour consumption prediction.")
 
 MODEL_PATH = "models/demo_model.pkl"
-FEATURES = [
-    # put the 8–12 columns you actually used after RFE, e.g.:
-    "global_active_power",
-    "global_reactive_power",
-    "voltage",
-    "global_intensity",
-    "sub_metering_1",
-    "sub_metering_2",
-    "sub_metering_3",
-]
 
 @st.cache_resource
 def load_model():
@@ -27,26 +18,33 @@ def load_model():
 
 model = load_model()
 
-st.subheader("1. Upload CSV")
-file = st.file_uploader("CSV with at least 24 rows and these columns:", type=["csv"])
-with st.expander("Required columns"):
-    st.code("\n".join(FEATURES))
+# ---- User Input Section ----
+st.subheader("🔢 Input your latest readings:")
 
-if file is not None:
-    df = pd.read_csv(file)
-    missing = [c for c in FEATURES if c not in df.columns]
-    if missing:
-        st.error(f"Missing columns: {missing}")
+col1, col2 = st.columns(2)
+
+with col1:
+    global_active_power = st.number_input("Global Active Power (kW)", min_value=0.0, format="%.3f")
+    voltage = st.number_input("Voltage (V)", min_value=200.0, format="%.2f")
+    sub_metering_1 = st.number_input("Sub Metering 1 (W-h)", min_value=0.0, format="%.2f")
+    sub_metering_3 = st.number_input("Sub Metering 3 (W-h)", min_value=0.0, format="%.2f")
+
+with col2:
+    global_reactive_power = st.number_input("Global Reactive Power (kVAR)", min_value=0.0, format="%.3f")
+    global_intensity = st.number_input("Global Intensity (A)", min_value=0.0, format="%.2f")
+    sub_metering_2 = st.number_input("Sub Metering 2 (W-h)", min_value=0.0, format="%.2f")
+
+# ---- Predict Button ----
+if st.button("🔮 Predict Energy Consumption"):
+    features = np.array([[global_active_power, global_reactive_power, voltage,
+                          global_intensity, sub_metering_1, sub_metering_2, sub_metering_3]])
+
+    if model is None:
+        st.error("Model not found. Please ensure 'models/demo_model.pkl' exists.")
     else:
-        last_row = df[FEATURES].tail(1)
-        st.write("Last row used for prediction:")
-        st.dataframe(last_row)
-
-        if model is None:
-            st.warning("Model file not found on cloud. Showing dummy value.")
-            st.metric("Predicted energy (kWh)", "1.234")
-        else:
-            y_pred = model.predict(last_row)[0]
-            st.metric("Predicted energy (kWh)", f"{y_pred:.3f}")
+        prediction = model.predict(features)[0]
+        st.success(f"⚡ Predicted Next-Hour Energy Consumption: **{prediction:.3f} kWh**")
 else:
-    st.info("Upload a CSV to run prediction.")
+    st.info("Enter readings and click Predict.")
+
+st.caption("Note: This lightweight cloud version uses a scikit-learn model trained on selected RFE features.")
