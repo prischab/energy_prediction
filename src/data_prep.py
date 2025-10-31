@@ -1,28 +1,44 @@
 import pandas as pd
-from .config import RESAMPLE_RULE, TARGET, MAX_LAG, ROLL_WINDOWS
+from pathlib import Path
 
 
-def load_raw(path: str) -> pd.DataFrame:
-df = pd.read_csv(path, sep=';', na_values='?', low_memory=False)
-# Combine Date + Time (dayfirst=True for UCI format)
-df['datetime'] = pd.to_datetime(df['Date'] + ' ' + df['Time'], dayfirst=True)
-df = df.drop(columns=['Date', 'Time']).sort_values('datetime').set_index('datetime')
-df = df.apply(pd.to_numeric, errors='coerce').dropna()
-return df
+def clean_data():
+    RAW_PATH = Path("data/household_power_consumption.txt")
+    OUT_PATH = Path("data/cleaned_data.csv")
+
+    # Read dataset
+    df = pd.read_csv(
+        RAW_PATH,
+        sep=';',
+        na_values='?',
+        low_memory=False
+    )
+
+    # Combine date and time into a datetime column
+    df["datetime"] = pd.to_datetime(df["Date"] + " " + df["Time"], dayfirst=True, errors="coerce")
+    df = df.drop(columns=["Date", "Time"])
+
+    # Convert numeric columns
+    num_cols = [
+        "Global_active_power",
+        "Global_reactive_power",
+        "Voltage",
+        "Global_intensity",
+        "Sub_metering_1",
+        "Sub_metering_2",
+        "Sub_metering_3"
+    ]
+    df[num_cols] = df[num_cols].apply(pd.to_numeric, errors="coerce")
+
+    # Set datetime index and resample to hourly mean
+    df = df.set_index("datetime").sort_index()
+    df = df.resample("h").mean().dropna(how="all")
+
+    # Save cleaned dataset
+    OUT_PATH.parent.mkdir(parents=True, exist_ok=True)
+    df.to_csv(OUT_PATH)
+    print(f"✅ Cleaned dataset saved to {OUT_PATH}")
 
 
-def resample_hourly(df: pd.DataFrame) -> pd.DataFrame:
-return df.resample(RESAMPLE_RULE).mean().dropna()
-
-
-def build_features(df: pd.DataFrame) -> pd.DataFrame:
-df = df.copy()
-for L in range(1, MAX_LAG+1):
-df[f'{TARGET}_lag_{L}'] = df[TARGET].shift(L)
-for w in ROLL_WINDOWS:
-df[f'{TARGET}_roll_mean_{w}'] = df[TARGET].rolling(w).mean()
-df[f'{TARGET}_roll_std_{w}'] = df[TARGET].rolling(w).std()
-df['hour'] = df.index.hour
-df['weekday'] = df.index.weekday
-df['month'] = df.index.month
-return df.dropna()
+if __name__ == "__main__":
+    clean_data()

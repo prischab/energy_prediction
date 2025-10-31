@@ -1,5 +1,7 @@
+"""Project-wide configuration constants."""
+
 DATA_PATH = "data/household_power_consumption.txt"
-RESAMPLE_RULE = "h" # hourly (future-proof)
+RESAMPLE_RULE = "h"  # hourly (future-proof)
 TARGET = "Global_active_power"
 MAX_LAG = 24
 ROLL_WINDOWS = [3, 6, 12, 24]
