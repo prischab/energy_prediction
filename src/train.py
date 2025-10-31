@@ -1,76 +1,94 @@
-import os, json, joblib
-from .data_prep import load_raw, resample_hourly, build_features
+"""Training entrypoint for the LSTM energy consumption forecaster."""
+
+from __future__ import annotations
+
+import json
+import os
+
+import joblib
+import pandas as pd
+from sklearn.preprocessing import MinMaxScaler
+
+from .config import DATA_PATH, HORIZONS, MODEL_DIR, N_FEATURES_RFE, SEQ_LEN, TARGET
+from .data_prep import build_features, load_raw, resample_hourly
+from .model_lstm import build_lstm, fit_model
 from .rfe_select import run_rfe
 from .seq_window import to_sequences, to_sequences_multi
-from .model_lstm import build_lstm, fit_model
 
 
-def main(horizon_key="1h"):
-if not os.path.exists(DATA_PATH):
-raise FileNotFoundError(f"Dataset not found at {DATA_PATH}")
+def main(horizon_key: str = "1h", data_path: str | None = None):
+    """Train the LSTM model for the requested forecast horizon."""
+    data_path = data_path or DATA_PATH
+    if not os.path.exists(data_path):
+        raise FileNotFoundError(f"Dataset not found at {data_path}")
 
+    print("🚀 Loading data…")
+    df = build_features(resample_hourly(load_raw(data_path)))
+    y = df[TARGET]
+    X = df.drop(columns=[TARGET])
 
-print("🚀 Loading data…")
-df = build_features(resample_hourly(load_raw(DATA_PATH)))
-y = df[TARGET]
-X = df.drop(columns=[TARGET])
+    print("🔎 RFE selecting features…")
+    selected, ranking = run_rfe(X, y, n_features=N_FEATURES_RFE, step=5)
+    X = X[selected]
 
+    split = int(0.8 * len(X))
+    X_train, X_test = X.iloc[:split], X.iloc[split:]
+    y_train, y_test = y.iloc[:split], y.iloc[split:]
 
-print("🔎 RFE selecting features…")
-selected, ranking = run_rfe(X, y, n_features=N_FEATURES_RFE, step=5)
-X = X[selected]
+    scaler_X, scaler_y = MinMaxScaler(), MinMaxScaler()
+    X_train_scaled = scaler_X.fit_transform(X_train)
+    X_test_scaled = scaler_X.transform(X_test)
+    y_train_scaled = scaler_y.fit_transform(y_train.values.reshape(-1, 1)).ravel()
+    y_test_scaled = scaler_y.transform(y_test.values.reshape(-1, 1)).ravel()
 
+    horizon = HORIZONS[horizon_key]
+    if horizon == 1:
+        seq_builder = to_sequences
+        out_dim = 1
+    else:
+        seq_builder = to_sequences_multi
+        out_dim = horizon
 
-split = int(0.8 * len(X))
-Xtr, Xte = X.iloc[:split], X.iloc[split:]
-ytr, yte = y.iloc[:split], y.iloc[split:]
+    X_train_df = pd.DataFrame(X_train_scaled, index=X_train.index, columns=X_train.columns)
+    X_test_df = pd.DataFrame(X_test_scaled, index=X_test.index, columns=X_test.columns)
+    y_train_series = pd.Series(y_train_scaled, index=y_train.index)
+    y_test_series = pd.Series(y_test_scaled, index=y_test.index)
 
+    X_train_seq, y_train_seq = seq_builder(X_train_df, y_train_series, seq_len=SEQ_LEN, horizon=horizon)
+    X_test_seq, y_test_seq = seq_builder(X_test_df, y_test_series, seq_len=SEQ_LEN, horizon=horizon)
 
-sx, sy = MinMaxScaler(), MinMaxScaler()
-Xtr_s = sx.fit_transform(Xtr)
-Xte_s = sx.transform(Xte)
+    model = build_lstm(n_features=X.shape[1], seq_len=SEQ_LEN, out_dim=out_dim)
+    validation_cut = int(0.9 * len(X_train_seq))
+    print("🏋️ Training LSTM…")
+    fit_model(
+        model,
+        X_train_seq[:validation_cut],
+        y_train_seq[:validation_cut],
+        X_train_seq[validation_cut:],
+        y_train_seq[validation_cut:],
+        epochs=30,
+        batch=64,
+    )
 
-
-horizon = HORIZONS[horizon_key]
-if horizon == 1:
-ytr_s = sy.fit_transform(ytr.values.reshape(-1,1)).ravel()
-yte_s = sy.transform(yte.values.reshape(-1,1)).ravel()
-Xtr_seq, ytr_seq = to_sequences(pd.DataFrame(Xtr_s, index=Xtr.index, columns=X.columns),
-pd.Series(ytr_s, index=ytr.index), seq_len=SEQ_LEN, horizon=1)
-Xte_seq, yte_seq = to_sequences(pd.DataFrame(Xte_s, index=Xte.index, columns=X.columns),
-pd.Series(yte_s, index=yte.index), seq_len=SEQ_LEN, horizon=1)
-out_dim = 1
-else:
-ytr_s = sy.fit_transform(ytr.values.reshape(-1,1)).ravel()
-yte_s = sy.transform(yte.values.reshape(-1,1)).ravel()
-Xtr_seq, ytr_seq = to_sequences_multi(pd.DataFrame(Xtr_s, index=Xtr.index, columns=X.columns),
-pd.Series(ytr_s, index=ytr.index), seq_len=SEQ_LEN, horizon=horizon)
-Xte_seq, yte_seq = to_sequences_multi(pd.DataFrame(Xte_s, index=Xte.index, columns=X.columns),
-pd.Series(yte_s, index=yte.index), seq_len=SEQ_LEN, horizon=horizon)
-out_dim = horizon
-
-
-model = build_lstm(n_features=X.shape[1], seq_len=SEQ_LEN, out_dim=out_dim)
-vcut = int(0.9 * len(Xtr_seq))
-print("🏋️ Training LSTM…")
-_ = fit_model(model, Xtr_seq[:vcut], ytr_seq[:vcut], Xtr_seq[vcut:], ytr_seq[vcut:], epochs=30, batch=64)
-
-
-os.makedirs(MODEL_DIR, exist_ok=True)
-model.save(os.path.join(MODEL_DIR, 'lstm_model.keras'))
-joblib.dump(sx, os.path.join(MODEL_DIR, 'scaler_X.pkl'))
-joblib.dump(sy, os.path.join(MODEL_DIR, 'scaler_y.pkl'))
-with open(os.path.join(MODEL_DIR, 'meta.json'), 'w') as f:
-json.dump({
-'seq_len': SEQ_LEN,
-'feature_order': X.columns.tolist(),
-'horizon': horizon,
-'target': TARGET,
-'selected_rfe': selected,
-'ranking': ranking
-}, f, indent=2)
-print("💾 Saved artifacts to ./models")
+    os.makedirs(MODEL_DIR, exist_ok=True)
+    model.save(os.path.join(MODEL_DIR, "lstm_model.keras"))
+    joblib.dump(scaler_X, os.path.join(MODEL_DIR, "scaler_X.pkl"))
+    joblib.dump(scaler_y, os.path.join(MODEL_DIR, "scaler_y.pkl"))
+    with open(os.path.join(MODEL_DIR, "meta.json"), "w", encoding="utf-8") as fp:
+        json.dump(
+            {
+                "seq_len": SEQ_LEN,
+                "feature_order": X.columns.tolist(),
+                "horizon": horizon,
+                "target": TARGET,
+                "selected_rfe": selected,
+                "ranking": ranking,
+            },
+            fp,
+            indent=2,
+        )
+    print("💾 Saved artifacts to ./models")
 
 
 if __name__ == "__main__":
-main("1h")
+    main("1h")
